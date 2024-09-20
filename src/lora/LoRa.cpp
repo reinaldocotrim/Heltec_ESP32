@@ -47,6 +47,26 @@
 #define IRQ_PAYLOAD_CRC_ERROR_MASK 0x20
 #define IRQ_RX_DONE_MASK           0x40
 
+/*!
+ * RegInvertIQ
+ */
+#define RFLR_INVERTIQ_RX_MASK                       0xBF
+#define RFLR_INVERTIQ_RX_OFF                        0x00
+#define RFLR_INVERTIQ_RX_ON                         0x40
+#define RFLR_INVERTIQ_TX_MASK                       0xFE
+#define RFLR_INVERTIQ_TX_OFF                        0x01
+#define RFLR_INVERTIQ_TX_ON                         0x00
+
+#define REG_LR_INVERTIQ                             0x33
+
+/*!
+ * RegInvertIQ2
+ */
+#define RFLR_INVERTIQ2_ON                           0x19
+#define RFLR_INVERTIQ2_OFF                          0x1D
+
+#define REG_LR_INVERTIQ2                            0x3B
+
 
 #define MAX_PKT_LENGTH           255
 
@@ -93,6 +113,8 @@ int LoRaClass::begin(long frequency,bool PABOOST)
   writeRegister(REG_LNA, readRegister(REG_LNA) | 0x03);
   // set auto AGC
   writeRegister(REG_MODEM_CONFIG_3, 0x04);
+  // disable LDR by default
+  disableLowDataRate();
   // set output power to 14 dBm
   if(PABOOST == true)
 	  setTxPower(14, RF_PACONFIG_PASELECT_PABOOST);
@@ -132,14 +154,23 @@ int LoRaClass::beginPacket(int implicitHeader)
   return 1;
 }
 
-int LoRaClass::endPacket()
+int LoRaClass::endPacket(bool async)
 {
   // put in TX mode
   writeRegister(REG_OP_MODE, MODE_LONG_RANGE_MODE | MODE_TX);
-  // wait for TX done
-  while((readRegister(REG_IRQ_FLAGS) & IRQ_TX_DONE_MASK) == 0);
-  // clear IRQ's
-  writeRegister(REG_IRQ_FLAGS, IRQ_TX_DONE_MASK);
+
+  if (async) {
+    // grace time is required for the radio
+    delayMicroseconds(150);
+  } else {
+    // wait for TX done
+    while ((readRegister(REG_IRQ_FLAGS) & IRQ_TX_DONE_MASK) == 0) {
+      yield();
+    }
+    // clear IRQ's
+    writeRegister(REG_IRQ_FLAGS, IRQ_TX_DONE_MASK);
+  }
+
   return 1;
 }
 
@@ -184,12 +215,36 @@ int LoRaClass::parsePacket(int size)
 
 int LoRaClass::packetRssi()
 {
-  return (readRegister(REG_PKT_RSSI_VALUE) - (_frequency < 868E6 ? 164 : 157));
+	int8_t snr=0;
+    int8_t SnrValue = readRegister( 0x19 );
+    int16_t rssi = readRegister(REG_PKT_RSSI_VALUE);
+
+	if( SnrValue & 0x80 ) // The SNR sign bit is 1
+	{
+		// Invert and divide by 4
+		snr = ( ( ~SnrValue + 1 ) & 0xFF ) >> 2;
+		snr = -snr;
+	}
+	else
+	{
+		// Divide by 4
+		snr = ( SnrValue & 0xFF ) >> 2;
+	}
+    if(snr<0)
+    {
+    	rssi = rssi - (_frequency < 525E6 ? 164 : 157) + ( rssi >> 4 ) + snr;
+    }
+    else
+    {
+    	rssi = rssi - (_frequency < 525E6 ? 164 : 157) + ( rssi >> 4 );
+    }
+
+  return ( rssi );
 }
 
 float LoRaClass::packetSnr()
 {
-  return ((int8_t)readRegister(REG_PKT_SNR_VALUE)) * 0.25;
+  return (((int8_t)readRegister(REG_PKT_SNR_VALUE) +2) >> 2);
 }
 
 size_t LoRaClass::write(uint8_t byte)
@@ -431,6 +486,30 @@ void LoRaClass::disableCrc()
   writeRegister(REG_MODEM_CONFIG_2, readRegister(REG_MODEM_CONFIG_2) & 0xfb);
 }
 
+void LoRaClass::enableTxInvertIQ()
+{
+  writeRegister( REG_LR_INVERTIQ, ( ( readRegister( REG_LR_INVERTIQ ) & RFLR_INVERTIQ_TX_MASK & RFLR_INVERTIQ_RX_MASK ) | RFLR_INVERTIQ_RX_OFF | RFLR_INVERTIQ_TX_ON ) );
+  writeRegister( REG_LR_INVERTIQ2, RFLR_INVERTIQ2_ON );
+}
+
+void LoRaClass::enableRxInvertIQ()
+{
+  writeRegister( REG_LR_INVERTIQ, ( ( readRegister( REG_LR_INVERTIQ ) & RFLR_INVERTIQ_TX_MASK & RFLR_INVERTIQ_RX_MASK ) | RFLR_INVERTIQ_RX_ON | RFLR_INVERTIQ_TX_OFF ) );
+  writeRegister( REG_LR_INVERTIQ2, RFLR_INVERTIQ2_ON );
+}
+
+void LoRaClass::disableInvertIQ()
+{
+  writeRegister( REG_LR_INVERTIQ, ( ( readRegister( REG_LR_INVERTIQ ) & RFLR_INVERTIQ_TX_MASK & RFLR_INVERTIQ_RX_MASK ) | RFLR_INVERTIQ_RX_OFF | RFLR_INVERTIQ_TX_OFF ) );
+  writeRegister( REG_LR_INVERTIQ2, RFLR_INVERTIQ2_OFF );
+}
+
+void LoRaClass::enableInvertIQ()
+{
+  writeRegister( REG_LR_INVERTIQ, ( ( readRegister( REG_LR_INVERTIQ ) & RFLR_INVERTIQ_TX_MASK & RFLR_INVERTIQ_RX_MASK ) | RFLR_INVERTIQ_RX_ON | RFLR_INVERTIQ_TX_ON ) );
+  writeRegister( REG_LR_INVERTIQ2, RFLR_INVERTIQ2_ON );
+}
+
 byte LoRaClass::random()
 {
   return readRegister(REG_RSSI_WIDEBAND);
@@ -513,6 +592,16 @@ uint8_t LoRaClass::singleTransfer(uint8_t address, uint8_t value)
 void LoRaClass::onDio0Rise()
 {
   LoRa.handleDio0Rise();
+}
+
+void LoRaClass::enableLowDataRate()
+{
+  writeRegister(REG_MODEM_CONFIG_3, readRegister(REG_MODEM_CONFIG_3) | 0x08);
+}
+
+void LoRaClass::disableLowDataRate()
+{
+  writeRegister(REG_MODEM_CONFIG_3, readRegister(REG_MODEM_CONFIG_3) & ~0x08);
 }
 
 LoRaClass LoRa;

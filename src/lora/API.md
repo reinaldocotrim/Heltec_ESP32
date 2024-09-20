@@ -242,7 +242,7 @@ Change the spreading factor of the radio.
 ```arduino
 LoRa.setSpreadingFactor(spreadingFactor);
 ```
- * `spreadingFactor` - spreading factor, defaults to `7`
+ * `spreadingFactor` - spreading factor, defaults to `11`
 
 Supported values are between `6` and `12`. If a spreading factor of `6` is set, implicit header mode must be used to transmit and receive packets.
 
@@ -300,6 +300,18 @@ Enable or disable CRC usage, by default a CRC is not used.
 LoRa.enableCrc();
 
 LoRa.disableCrc();
+```
+
+### iqInverted
+
+Enable or disable iqInverted for TX/RX
+
+```arduino
+LoRa.disableInvertIQ();
+LoRa.enableInvertIQ();
+LoRa.enableTxInvertIQ();
+LoRa.enableRxInvertIQ();
+
 ```
 
 ## Other functions

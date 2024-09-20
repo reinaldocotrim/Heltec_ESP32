@@ -7,6 +7,7 @@ Desktop.ini
 
 # Recycle Bin used on file shares
 $RECYCLE.BIN/
+.vscode
 
 # Windows Installer files
 *.cab
@@ -16,6 +17,14 @@ $RECYCLE.BIN/
 
 # Windows shortcuts
 *.lnk
+
+# Text editor backup files
+.*.swp
+.*.swo
+*~
+
+# CMake build folder
+/build
 
 # =========================
 # Operating System Files
